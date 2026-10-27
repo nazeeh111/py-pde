@@ -51,6 +51,11 @@ jobs:
         cat tests/requirements_mpi.txt | sed -e '/^\s*#.*$/d' -e '/^\s*$/d' | xargs -I % sh -c "pip install % || true"
         pip install -r tests/requirements.txt
 
+    - name: Check MPI solver failure exit status
+      env:
+        MPLBACKEND: agg
+      run: python -m pytest tests/tools/test_mpi.py -k test_mpi_error_exit_status
+
     - name: Run parallel tests with pytest
       env:
         NUMBA_WARNINGS: 1

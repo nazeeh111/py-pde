@@ -2,10 +2,59 @@
 .. codeauthor:: David Zwicker <david.zwicker@ds.mpg.de>
 """
 
+import os
+import shutil
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from pde.tools.mpi import mpi_allreduce, mpi_recv, mpi_send, rank, size
+
+
+def test_mpi_error_exit_status(tmp_path):
+    """An error inside an MPI solver must fail the launcher as well."""
+    if size > 1:
+        pytest.skip("This test launches its own MPI job")
+    pytest.importorskip("mpi4py")
+    pytest.importorskip("numba_mpi")
+    launcher = shutil.which("mpiexec")
+    if launcher is None:
+        pytest.skip("MPI launcher is not available")
+
+    script = tmp_path / "mpi_error.py"
+    script.write_text(
+        textwrap.dedent("""\
+            from mpi4py import MPI
+            from pde import PDE, ScalarField, UnitGrid
+
+            assert MPI.COMM_WORLD.size == 2
+            print(f"ready:{MPI.COMM_WORLD.rank}", flush=True)
+            MPI.COMM_WORLD.Barrier()
+            PDE({"c": "undefined_rhs"}).solve(
+                ScalarField(UnitGrid([4])), solver="explicit_mpi", t_range=1
+            )
+            """),
+        encoding="utf-8",
+    )
+    command = [launcher, "-n", "2"]
+    if sys.platform == "darwin":
+        command += ["-host", "localhost:2"]
+    command += [sys.executable, str(script)]
+    package_path = Path(__file__).resolve().parents[2]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(package_path) + os.pathsep + env.get("PYTHONPATH", "")
+    result = subprocess.run(
+        command, env=env, capture_output=True, text=True, timeout=120
+    )
+    output = result.stdout + result.stderr
+    assert "ready:0" in result.stdout, output
+    assert "ready:1" in result.stdout, output
+    assert "undefined_rhs" in result.stderr, output
+    assert result.returncode != 0, output
 
 
 @pytest.mark.multiprocessing
